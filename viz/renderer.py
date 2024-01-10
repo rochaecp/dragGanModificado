@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
-from socket import has_dualstack_ipv6
+#from socket import has_dualstack_ipv6
 import sys
 import copy
 import traceback
@@ -45,7 +45,7 @@ class CaptureSuccess(Exception):
 
 #----------------------------------------------------------------------------
 
-def add_watermark_np(input_image_array, watermark_text="AI Generated"):
+def add_watermark_np(input_image_array, watermark_text="Gerado por IA"):
     image = Image.fromarray(np.uint8(input_image_array)).convert("RGBA")
 
     # Initialize text image
@@ -67,7 +67,9 @@ def add_watermark_np(input_image_array, watermark_text="AI Generated"):
 
 #----------------------------------------------------------------------------
 
+# Classe para renderização de imagens
 class Renderer:
+    # Inicializa o objeto Renderer
     def __init__(self, disable_timing=False):
         self._device        = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
         self._dtype         = torch.float32 if self._device.type == 'mps' else torch.float64
@@ -82,6 +84,7 @@ class Renderer:
         self._disable_timing = disable_timing
         self._net_layers    = dict()    # {cache_key: [dnnlib.EasyDict, ...], ...}
 
+    # Gerencia o processo de renderização
     def render(self, **args):
         if self._disable_timing:
             self._is_timing = False
@@ -110,7 +113,7 @@ class Renderer:
             res.init_net = init_net
             if init_net:
                 self.init_network(res, **args)
-            self._render_drag_impl(res, **args)
+            self._render_drag_impl(res, **args) # Chama a Implementação da Renderização
         except:
             res.error = CapturedException()
         if not self._disable_timing:
@@ -130,6 +133,7 @@ class Renderer:
             self._is_timing = False
         return res
 
+    # Carrega e armazena em cache redes neurais
     def get_network(self, pkl, key, **tweak_kwargs):
         data = self._pkl_data.get(pkl, None)
         if data is None:
@@ -176,6 +180,7 @@ class Renderer:
             raise net
         return net
 
+    # Gerencia a fixação de memória para tensores para otimizar a transferência de dados entre CPU e GPU
     def _get_pinned_buf(self, ref):
         key = (tuple(ref.shape), ref.dtype)
         buf = self._pinned_bufs.get(key, None)
@@ -184,15 +189,19 @@ class Renderer:
             self._pinned_bufs[key] = buf
         return buf
 
+    # Método para mover dados para o dispositivo
     def to_device(self, buf):
         return self._get_pinned_buf(buf).copy_(buf).to(self._device)
 
+    # Método para mover dados para a cpu    
     def to_cpu(self, buf):
         return self._get_pinned_buf(buf).copy_(buf).clone()
 
+    # Método utilitário para desativar a temporização para certas operações
     def _ignore_timing(self):
         self._is_timing = False
 
+    # Aplica um mapa de cores ao tensor fornecido, usado para fins de visualização
     def _apply_cmap(self, x, name='viridis'):
         cmap = self._cmaps.get(name, None)
         if cmap is None:
@@ -205,73 +214,114 @@ class Renderer:
         x = torch.nn.functional.embedding(x, cmap)
         return x
 
+    # Inicializa e configura a rede neural
     def init_network(self, res,
-        pkl             = None,
-        w0_seed         = 0,
-        w_load          = None,
-        w_plus          = True,
-        noise_mode      = 'const',
-        trunc_psi       = 0.7,
-        trunc_cutoff    = None,
-        input_transform = None,
-        lr              = 0.001,
+        pkl             = None,     # Caminho ou identificador para o arquivo de modelo pre-treinado
+        w0_seed         = 0,        # Parâmetros relacionados a códigos latentes iniciais
+        w_load          = None,     # Parâmetros relacionados a códigos latentes iniciais
+        w_plus          = True,     # Um booleano para determinar se deve usar o esquema de códigos latentes "w plus"
+        noise_mode      = 'const',  # Parâmetro de controle para a geração de imagem
+        trunc_psi       = 0.7,      # Parâmetro de controle para a geração de imagem
+        trunc_cutoff    = None,     # Parâmetro de controle para a geração de imagem
+        input_transform = None,     # Transformação de entrada
+        lr              = 0.001,    # Taxa de aprendizado para ajustes na rede
         **kwargs
         ):
-        # Dig up network details.
-        self.pkl = pkl
-        G = self.get_network(pkl, 'G_ema')
-        self.G = G
-        res.img_resolution = G.img_resolution
+
+        # Armazena o caminho ou identificador do modelo
+        self.pkl = pkl 
+
+        # Carrega a rede neural como um módulo PyTorch
+        G = self.get_network(pkl, 'G_ema') 
+
+        # Atribui a rede carregada a uma variável de instância
+        self.G = G 
+        
+        # Armazena detalhes da imagem e da rede no objeto res
+        res.img_resolution = G.img_resolution 
         res.num_ws = G.num_ws
         res.has_noise = any('noise_const' in name for name, _buf in G.synthesis.named_buffers())
         res.has_input_transform = (hasattr(G.synthesis, 'input') and hasattr(G.synthesis.input, 'transform'))
 
-        # Set input transform.
+        # Configura a Transformação de Entrada
         if res.has_input_transform:
+            
+            # Retorna uma matriz 2-D com uns na diagonal e zeros em outros lugares
             m = np.eye(3)
             try:
+                # Verifica se a rede possui uma transformação de entrada específica e, se sim, tenta aplicá-la usando matrizes de transformação
                 if input_transform is not None:
                     m = np.linalg.inv(np.asarray(input_transform))
             except np.linalg.LinAlgError:
                 res.error = CapturedException()
+
+            # Copia os dados da matriz m para o tensor de transformação de entrada
             G.synthesis.input.transform.copy_(torch.from_numpy(m))
 
-        # Generate random latents.
+        # Geração de Latentes Aleatórios
         self.w0_seed = w0_seed
         self.w_load = w_load
 
         if self.w_load is None:
-            # Generate random latents.
+            # Gera um vetor latente z aleatório
             z = torch.from_numpy(np.random.RandomState(w0_seed).randn(1, 512)).to(self._device, dtype=self._dtype)
 
-            # Run mapping network.
+            # Cria um tensor de rótulos
+                # G.c_dim: é a dimensão do espaço de rótulos condicionais
+                # self._device: é o dispositivo onde o tensor deve ser alocado
+                # Inicializa como um tensor de zeros
             label = torch.zeros([1, G.c_dim], device=self._device)
+            
+            # Execução da Rede de Mapeamento 
+                # G.mapping: rede de mapeamento que transforma um vetor latente inicial z em um vetor latente intermediário w
+                # label: rótulos condicionais
+                # truncation_psi e truncation_cutoff: parâmetros da StyleGAN que controlam a "truncagem" do espaço latente
             w = G.mapping(z, label, truncation_psi=trunc_psi, truncation_cutoff=trunc_cutoff)
         else:
             w = self.w_load.clone().to(self._device)
 
+        # Armazena o estado inicial do vetor latente w
         self.w0 = w.detach().clone()
+        
+        # w_plus é um booleano que indica se deve usar o espaço latente estendido "W+" em vez do espaço "W" regular
         self.w_plus = w_plus
+        
         if w_plus:
             self.w = w.detach()
         else:
+            # atualiza o estado de self.w com
+                # todos elementos na primeira dimensão de w (Batch Size: 1 gera uma imagem por vez)
+                # seleciona o primeiro elemento da segunda dimensão (número de camadas -> apenas a primeira camada)
+                # todos elementos na primeira dimensão de w (todos os componentes do vetor latente)
             self.w = w[:, 0, :].detach()
+        
+        # Calcula o gradiente durante a backpropagation para todas as operações no tensor w
+            # Permite ajustar os valores de w para minimizar a função de perda durante a otimização
         self.w.requires_grad = True
+        
+            # torch.optim.Adam: chamada ao otimizador Adam 
+                # (uma variante do método de descida de gradiente estocástico que ajusta cada parâmetro com taxas de aprendizado individualmente adaptáveis)
+            # [self.w]: lista de tensores com um tensor
+            # lr: taxa de aprendizado (learning rate) em float - influencia a velocidade e a qualidade da convergência do processo de otimização
+                # Uma taxa de aprendizado muito alta pode fazer com que o otimizador "pule" o mínimo, 
+                # enquanto uma taxa muito baixa pode fazer com que o treinamento seja muito lento ou fique preso em mínimos locais
         self.w_optim = torch.optim.Adam([self.w], lr=lr)
 
+        # Inicializa variáveis que serão usadas para referenciar características ou pontos específicos durante a manipulação de imagens
         self.feat_refs = None
         self.points0_pt = None
-
+        
+    # Atualiza a taxa de aprendizado do otimizador, útil para ajustes finos durante o processo de renderização
     def update_lr(self, lr):
-
         del self.w_optim
         self.w_optim = torch.optim.Adam([self.w], lr=lr)
         print(f'Rebuild optimizer with lr: {lr}')
         print('    Remain feat_refs and points0_pt')
 
-    def _render_drag_impl(self, res,
-        points          = [],
-        targets         = [],
+    # Implementa a lógica de renderização
+    def _render_drag_impl(self, res,    # res recebe global_state['generator_params']
+        points          = [],           # Coordenadas dos pontos de manipulação
+        targets         = [],           # Coordenadas dos pontos alvo
         mask            = None,
         lambda_mask     = 10,
         reg             = 0,
@@ -294,95 +344,269 @@ class Renderer:
         **kwargs
     ):
         G = self.G
+        
+        # ws: vetor latente atual
         ws = self.w
+
         if ws.dim() == 2:
+            # Ajuste do formato de ws para corresponder a quantidade de camadas da rede
+                # unsqueeze(1): adiciona uma dimensão de tamanho 1 ao tensor ws na posição 1. 
+                    # se ws tiver uma forma digamos [x, y] após ws.unsqueeze(1) ele vai virar [x, 1, y]
+                # repeat(1,6,1): repetir o tensor ao longo de cada dimensão especificada
+                    # A primeira dimensão não é repetida (1 vez).
+                    # A segunda dimensão (a que acabamos de adicionar com unsqueeze) é repetida 6 vezes.
+                    # A terceira dimensão não é repetida (1 vez).
             ws = ws.unsqueeze(1).repeat(1,6,1)
+        
+        # O tensor ws recebe uma concatenação de uma sequência de tensores 
+            # [ws[:,:6,:], self.w0[:,6:,:]]: lista de tensores a serem concatenados
+                # ws[:,:6,:]: fatia de ws ==> pega as primeiras 6 dimensões da segunda dimensão
+                # self.w0[:,6:,:]: fatia de self.w0 ==> pega tudo a partir da sétima camada da segunda dimensão
+            # dim=1: dimensão ao longo da qual a concatenação deve ocorrer (segunda dimensão)
         ws = torch.cat([ws[:,:6,:], self.w0[:,6:,:]], dim=1)
+        
         if hasattr(self, 'points'):
             if len(points) != len(self.points):
                 reset = True
+        
+        # Reset de referências
         if reset:
-            self.feat_refs = None
-            self.points0_pt = None
+            self.feat_refs = None  # referências de características
+            self.points0_pt = None # referências de pontos
+        
         self.points = points
 
-        # Run synthesis network.
+        # Cria um tensor label onde todos elementos são zero
+            # [1, G.c_dim]: fortmato do tensor a ser criado
+                # 1 é a dimensão do lote - uma imagem por vez
+                # 
         label = torch.zeros([1, G.c_dim], device=self._device)
+        
+        # Executa a rede de síntese
+            # G: rede geradora
+            # img: imagem gerada pela rede
+            # feat: mapas de features
         img, feat = G(ws, label, truncation_psi=trunc_psi, noise_mode=noise_mode, input_is_w=True, return_feature=True)
 
+        # resoluções da altura e largura: imagem quadrada
         h, w = G.img_resolution, G.img_resolution
 
         if is_drag:
+            
+            # Cria duas grades 1D de valores lineare
+                # torch.linspace(start, end, steps): cria um tensor de 1 dimensão contendo steps números igualmente espaçados entre start e end
+                # o tensor terá um total de steps elementos
             X = torch.linspace(0, h, h)
             Y = torch.linspace(0, w, w)
+            
+            # xx e yy são grades 2D onde xx[i, j] e yy[i, j] representam as coordenadas X e Y do ponto na posição (i, j) na imagem.
+            # torch.meshgrid(...): pega dois tensores 1D e produz dois tensores 2D que correspondem a todas as combinações de X e Y
+            # usado para criar uma grade de coordenadas
+            # xx: Para cada posição na grade, xx contém o valor da coordenada X correspondente
+            # yy: Para cada posição na grade, yy contém o valor da coordenada Y correspondente
             xx, yy = torch.meshgrid(X, Y)
+            
+            # Redimensiona as features do sexto bloco da Stylegan2 para terem a mesma dimensão da imagem original
+                # Geralmente h = 512 e w = 512
             feat_resize = F.interpolate(feat[feature_idx], [h, w], mode='bilinear')
+            
             if self.feat_refs is None:
+
+                # Redimensiona as Características  do bloco feature_idx = 5 (sexto bloco) da Stylegan2
+                    # Características iniciais e  garante que elas não rastreiem operações para cálculo do gradiente, tornando-as constantes
                 self.feat0_resize = F.interpolate(feat[feature_idx].detach(), [h, w], mode='bilinear')
-                self.feat_refs = []
+                
+                # lista com as características específicas dos pontos de interesse
+                self.feat_refs = [] 
+                
+                # Itera sobre cada ponto fornecido em points (coord dos pontos de manipulação)
                 for point in points:
+                    # Coordenadas arredondadas y (altura) e x (largura) do ponto de manipulação
                     py, px = round(point[0]), round(point[1])
+                    
+                    # Adiciona as características na localização especificada (py, px) à lista self.feat_refs
                     self.feat_refs.append(self.feat0_resize[:,:,py,px])
+                
+                # Configuração de self.points0_pt:
+                    # torch.Tensor(points): Converte a lista de pontos em um tensor PyTorch
+                    # .unsqueeze(0): Adiciona uma dimensão extra no início do tensor, transformando-o 
+                        # de uma matriz de forma [N, 2] para [1, N, 2], onde N é o número de pontos.
                 self.points0_pt = torch.Tensor(points).unsqueeze(0).to(self._device) # 1, N, 2
 
-            # Point tracking with feature matching
-            with torch.no_grad():
+            #----------------------------------------------------------------------------
+            # Rastreamento de pontos com correspondência de recursos
+            #----------------------------------------------------------------------------
+
+            with torch.no_grad(): # Desabilitando o Cálculo do Gradiente
+                
+                # Itera sobre cada ponto na lista points. j é o índice e point são as coordenadas (y, x) do ponto.
                 for j, point in enumerate(points):
+                    
+                    # Calcula um raio r baseado em r2 que será usado para definir uma região quadrada ao redor de cada ponto
                     r = round(r2 / 512 * h)
+                    
+                    # Limites superior, inferior, esquerdo e direito da região ao redor de cada ponto, usando o raio r
+                        # Garantem que os limites não ultrapassem as bordas da imagem, usando max e min para restringir os valores
                     up = max(point[0] - r, 0)
                     down = min(point[0] + r + 1, h)
                     left = max(point[1] - r, 0)
                     right = min(point[1] + r + 1, w)
+                    
+                    # Extrai um patch de características da imagem redimensionada feat_resize que corresponde à região ao redor do ponto atual
                     feat_patch = feat_resize[:,:,up:down,left:right]
+
+                    # Calcula a norma L2 (ou norma Euclidiana) da diferença entre o patch de características extraído e a referência 
+                    # de características armazenada para o ponto atual. Isso efetivamente mede a distância entre as características do 
+                    # patch atual e as características originais, fornecendo uma medida de similaridade.
                     L2 = torch.linalg.norm(feat_patch - self.feat_refs[j].reshape(1,-1,1,1), dim=1)
+                    
+                    # Encontra a posição dentro do patch de características que tem a menor distância (ou maior similaridade) às características de referência
                     _, idx = torch.min(L2.view(1,-1), -1)
+
+                    # Calcula a largura da região ao redor do ponto
                     width = right - left
+
+                    # Calcula as novas coordenadas do ponto baseando-se no índice de menor distância encontrado. Isso efetivamente 
+                    # move o ponto para a posição dentro da região que mais se assemelha às características originais
                     point = [idx.item() // width + up, idx.item() % width + left]
+                    
+                    # Atualiza a lista de pontos com a nova posição do ponto atual
                     points[j] = point
 
+            # Atualiza o objeto de resultado res com as novas posições dos pontos
             res.points = [[point[0], point[1]] for point in points]
 
-            # Motion supervision
+            #----------------------------------------------------------------------------
+            # Supervisão de movimentos - primeiro termo
+            #----------------------------------------------------------------------------
+            
+            # Variável para acumular a perda de movimento total - Perda associada ao movimento dos pontos em relação a seus alvos
             loss_motion = 0
+            
+            # Variável booleana que determinará se o processo de ajuste deve continuar ou parar
             res.stop = True
+
+            # Itera sobre cada ponto na lista points. j é o índice e point são as coordenadas (y, x) do ponto.
             for j, point in enumerate(points):
+
+                # Para cada ponto, calcula a diferença vetorial entre o ponto atual e seu alvo correspondente em targets
+                # Essa diferença é a "direção" que o ponto precisaria se mover para alcançar o alvo
                 direction = torch.Tensor([targets[j][1] - point[1], targets[j][0] - point[0]])
+
+                # Verifica se a norma (comprimento) do vetor direção é maior que um certo limite (o maior entre 2 / 512 * h e 2). 
+                # Se for, isso significa que o ponto ainda está significativamente longe do alvo, então res.stop é definido como 
+                # False para indicar que o processo de ajuste deve continuar.
                 if torch.linalg.norm(direction) > max(2 / 512 * h, 2):
                     res.stop = False
+
+                #  Se a norma da direção for maior que 1
                 if torch.linalg.norm(direction) > 1:
+                    
+                    # Calcula a distância euclidiana de cada ponto na grade gerada (xx, yy) para o ponto atual (point).
+                    # Esta distância é usada para determinar uma região de interesse ao redor do ponto
                     distance = ((xx.to(self._device) - point[0])**2 + (yy.to(self._device) - point[1])**2)**0.5
+                    
+                    # Identifica índices dentro de uma certa distância (r1) do ponto
+                    # Estes índices representam uma região localizada ao redor do ponto onde o ajuste será focado
                     relis, reljs = torch.where(distance < round(r1 / 512 * h))
+
+                    # Normaliza o vetor direção para ter comprimento unitário, evitando problemas relacionados à escala das distâncias
                     direction = direction / (torch.linalg.norm(direction) + 1e-7)
+                    
                     gridh = (relis+direction[1]) / (h-1) * 2 - 1
                     gridw = (reljs+direction[0]) / (w-1) * 2 - 1
+
+                    # Cria uma grade de mapeamento que será usada para reamostrar as características (feat_resize) na direção do movimento
+                    # Isso é feito ajustando as coordenadas da grade com base na direção do movimento
                     grid = torch.stack([gridw,gridh], dim=-1).unsqueeze(0).unsqueeze(0)
+                    
+                    # Usa a função grid_sample para reamostrar as características na direção do movimento
+                    # cria um novo conjunto de características que representam como as características de imagem seriam se 
+                    # o ponto se movesse na direção do alvo
                     target = F.grid_sample(feat_resize.float(), grid, align_corners=True).squeeze(2)
+                    
+                    # Calcula a perda L1 entre as características reamostradas e as características originais na região 
+                    # relevante e a acumula na variável loss_motion
+                        # l1_loss: retorna um tensor (de dimensão zero = um escalar)
                     loss_motion += F.l1_loss(feat_resize[:,:,relis,reljs].detach(), target)
 
+            # loss: escalar (tensor de dimensão zero)
             loss = loss_motion
+            
+            #----------------------------------------------------------------------------
+            # Supervisão de movimentos - segundo termo - aplicação da máscara
+            #----------------------------------------------------------------------------            
+            
+            # Se uma máscara foi fornecida ...
             if mask is not None:
+
+                # Verifica se a máscara contém apenas valores binários (0 ou 1)
                 if mask.min() == 0 and mask.max() == 1:
+                    
+                    # A máscara é movida para o dispositivo apropriado (CPU ou GPU) e redimensionada para 
+                    # combinar com as dimensões esperadas pelas operações subsequentes
+                    # unsqueeze(0) adiciona dimensões extras para tornar a máscara compatível com o formato das características.
                     mask_usq = mask.to(self._device).unsqueeze(0).unsqueeze(0)
+                    
+                    # Calcula a perda L1 entre as características redimensionadas e as características de referência, 
+                    # mas apenas nas regiões especificadas pela máscara
+                    # Calcula a norma L1 da diferença entre F e F0
                     loss_fix = F.l1_loss(feat_resize * mask_usq, self.feat0_resize * mask_usq)
+                    
+                    # lambda_mask: hiperparâmetro que equilibra a importância dessa perda específica em relação às outras perda
                     loss += lambda_mask * loss_fix
 
-            loss += reg * F.l1_loss(ws, self.w0)  # latent code regularization
+            # Adiciona uma perda de regularização à perda total, baseada na distância entre o código latente atual ws e um estado 
+            # inicial ou referência self.w0. reg é um fator de regularização que controla a importância desta perda.
+            # A perda calculada é ponderada pelo fator lambda_mask e adicionada à perda total.
+            loss += reg * F.l1_loss(ws, self.w0) # regularização do código latente
+            
+            # Se o processo não está marcado para parar (res.stop é False), então prossegue com a atualização do código latente
             if not res.stop:
+                # Zera os gradientes dos pesos do otimizador antes de calcular os novos gradientes. 
+                # Isso é necessário porque, por padrão, os gradientes no PyTorch se acumulam.                
                 self.w_optim.zero_grad()
+                
+                # Calcula os gradientes da perda em relação a todas as variáveis que requerem gradiente (definidas por requires_grad=True).
                 loss.backward()
+
+                # Aplica uma atualização aos parâmetros com base nos gradientes calculados. 
+                # Esta é a etapa onde o código latente ws é efetivamente ajustado na direção que minimiza a perda.
+                # Aplica uma etapa de otimização (atualização dos pesos) usando os gradientes calculados 
+                # pelo loss.backward(). 
                 self.w_optim.step()
 
-        # Scale and convert to uint8.
+        #----------------------------------------------------------------------------
+        # Dimensione e converta para uint8 (Seleção e Normalização da Imagem)
+        #----------------------------------------------------------------------------
+
+        # Pega a primeira imagem do lote (no nosso caso há apenas 1 lote)
         img = img[0]
-        if img_normalize:
+
+        if img_normalize: # False por padrão
+            # Normaliza a imagem
             img = img / img.norm(float('inf'), dim=[1,2], keepdim=True).clip(1e-8, 1e8)
-        img = img * (10 ** (img_scale_db / 20))
+
+        # Ajusta a escala da imagem
+        img = img * (10 ** (img_scale_db / 20)) # img_scale_db = 0 por padrão
+
+        # Ajusta a escala e o offset dos valores dos pixels para que estejam no intervalo [0, 255]
+            # Clampa os valores: para garantir que todos os valores de pixels estejam dentro do intervalo [0, 255].
+            # Converte os valores para uint8: o formato padrão para imagens com valores de pixel entre 0 e 255
+            # Reordena as dimensões: usando permute(1, 2, 0)
+                # para reorganizar as dimensões da matriz de imagem de um formato específico do PyTorch para um formato mais padrão (altura, largura, canais)
         img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8).permute(1, 2, 0)
-        if to_pil:
+        
+        if to_pil: # False por padrão 
+            # Converte a imagem em um formato utilizável pela biblioteca Python Imaging Library (PIL)
             from PIL import Image
             img = img.cpu().numpy()
-            img = Image.fromarray(img)
+            img = Image.fromarray(img) # Converte o array NumPy para um objeto de imagem PIL
+        
+        # Armazena a imagem processada no objeto res, que parece ser um container para os resultados do processo
         res.image = img
+        
+        # Armazena o vetor latente ws (depois de desanexá-lo do gráfico de computação, movendo-o para a CPU e convertendo-o para NumPy) no objeto res
         res.w = ws.detach().cpu().numpy()
 
 #----------------------------------------------------------------------------
