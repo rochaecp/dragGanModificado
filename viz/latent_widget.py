@@ -32,7 +32,7 @@ class LatentWidget:
         viz = self.viz
         if show:
             with imgui_utils.grayed_out(self.disabled_time != 0):
-                imgui.text('Latent')
+                imgui.text('Vetor Latente')
                 imgui.same_line(viz.label_w)
                 with imgui_utils.item_width(viz.font_size * 8.75):
                     changed, seed = imgui.input_int('Seed', self.seed)

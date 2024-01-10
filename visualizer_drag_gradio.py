@@ -227,7 +227,7 @@ with gr.Blocks() as app:
                 # Latent
                 with gr.Row():
                     with gr.Column(scale=1, min_width=10):
-                        gr.Markdown(value='Latent', show_label=False)
+                        gr.Markdown(value='Vetor Latente', show_label=False)
 
                     with gr.Column(scale=4, min_width=10):
                         form_seed_number = gr.Number(
@@ -242,7 +242,7 @@ with gr.Blocks() as app:
 
                         with gr.Row():
                             with gr.Column(scale=2, min_width=10):
-                                form_reset_image = gr.Button("Reset Image")
+                                form_reset_image = gr.Button("Resetar Imagem")
                             with gr.Column(scale=3, min_width=10):
                                 form_latent_space = gr.Radio(
                                     ['w', 'w+'],
@@ -256,35 +256,35 @@ with gr.Blocks() as app:
                 # Drag
                 with gr.Row():
                     with gr.Column(scale=1, min_width=10):
-                        gr.Markdown(value='Drag', show_label=False)
+                        gr.Markdown(value='Pontos', show_label=False)
                     with gr.Column(scale=4, min_width=10):
                         with gr.Row():
                             with gr.Column(scale=1, min_width=10):
-                                enable_add_points = gr.Button('Add Points')
+                                enable_add_points = gr.Button('Adicionar Pontos')
                             with gr.Column(scale=1, min_width=10):
-                                undo_points = gr.Button('Reset Points')
+                                undo_points = gr.Button('Resetar Pontos')
                         with gr.Row():
                             with gr.Column(scale=1, min_width=10):
-                                form_start_btn = gr.Button("Start")
+                                form_start_btn = gr.Button("Iniciar")
                             with gr.Column(scale=1, min_width=10):
-                                form_stop_btn = gr.Button("Stop")
+                                form_stop_btn = gr.Button("Parar")
 
                         form_steps_number = gr.Number(value=0,
-                                                      label="Steps",
+                                                      label="Passos",
                                                       interactive=False)
 
                 # Mask
                 with gr.Row():
                     with gr.Column(scale=1, min_width=10):
-                        gr.Markdown(value='Mask', show_label=False)
+                        gr.Markdown(value='Máscara', show_label=False)
                     with gr.Column(scale=4, min_width=10):
-                        enable_add_mask = gr.Button('Edit Flexible Area')
+                        enable_add_mask = gr.Button('Editar Área Flexivel')
                         with gr.Row():
                             with gr.Column(scale=1, min_width=10):
-                                form_reset_mask_btn = gr.Button("Reset mask")
+                                form_reset_mask_btn = gr.Button("Resetar Mascara")
                             with gr.Column(scale=1, min_width=10):
                                 show_mask = gr.Checkbox(
-                                    label='Show Mask',
+                                    label='Mostrar Máscara',
                                     value=global_state.value['show_mask'],
                                     show_label=False)
 
@@ -308,43 +308,45 @@ with gr.Blocks() as app:
                     value=global_state.value['images']['image_show'],
                     brush_radius=20).style(
                         width=768,
-                        height=768)  # NOTE: hard image size code here.
-    gr.Markdown("""
-        ## Quick Start
+                        height=768)
 
-        1. Select desired `Pretrained Model` and adjust `Seed` to generate an
-           initial image.
-        2. Click on image to add control points.
-        3. Click `Start` and enjoy it!
+    # gr.Markdown("""
+    #     ## Quick Start
 
-        ## Advance Usage
+    #     1. Select desired `Pretrained Model` and adjust `Seed` to generate an
+    #        initial image.
+    #     2. Click on image to add control points.
+    #     3. Click `Start` and enjoy it!
 
-        1. Change `Step Size` to adjust learning rate in drag optimization.
-        2. Select `w` or `w+` to change latent space to optimize:
-        * Optimize on `w` space may cause greater influence to the image.
-        * Optimize on `w+` space may work slower than `w`, but usually achieve
-          better results.
-        * Note that changing the latent space will reset the image, points and
-          mask (this has the same effect as `Reset Image` button).
-        3. Click `Edit Flexible Area` to create a mask and constrain the
-           unmasked region to remain unchanged.
-        """)
-    gr.HTML("""
-        <style>
-            .container {
-                position: absolute;
-                height: 50px;
-                text-align: center;
-                line-height: 50px;
-                width: 100%;
-            }
-        </style>
-        <div class="container">
-        Gradio demo supported by
-        <img src="https://avatars.githubusercontent.com/u/10245193?s=200&v=4" height="20" width="20" style="display:inline;">
-        <a href="https://github.com/open-mmlab/mmagic">OpenMMLab MMagic</a>
-        </div>
-        """)
+    #     ## Advance Usage
+
+    #     1. Change `Step Size` to adjust learning rate in drag optimization.
+    #     2. Select `w` or `w+` to change latent space to optimize:
+    #     * Optimize on `w` space may cause greater influence to the image.
+    #     * Optimize on `w+` space may work slower than `w`, but usually achieve
+    #       better results.
+    #     * Note that changing the latent space will reset the image, points and
+    #       mask (this has the same effect as `Reset Image` button).
+    #     3. Click `Edit Flexible Area` to create a mask and constrain the
+    #        unmasked region to remain unchanged.
+    #     """)
+
+    # gr.HTML("""
+    #     <style>
+    #         .container {
+    #             position: absolute;
+    #             height: 50px;
+    #             text-align: center;
+    #             line-height: 50px;
+    #             width: 100%;
+    #         }
+    #     </style>
+    #     <div class="container">
+    #     Gradio demo supported by
+    #     <img src="https://avatars.githubusercontent.com/u/10245193?s=200&v=4" height="20" width="20" style="display:inline;">
+    #     <a href="https://github.com/open-mmlab/mmagic">OpenMMLab MMagic</a>
+    #     </div>
+    #     """)
 
     # Network & latents tab listeners
     def on_change_pretrained_dropdown(pretrained_value, global_state):

@@ -93,7 +93,7 @@ class DragWidget:
         reset = False
         if show:
             with imgui_utils.grayed_out(self.disabled_time != 0):
-                imgui.text('Drag')
+                imgui.text('Pontos')
                 imgui.same_line(viz.label_w)
 
                 if imgui_utils.button('Add point', width=viz.button_w, enabled='image' in viz.result):
@@ -120,7 +120,7 @@ class DragWidget:
                 imgui.same_line(viz.label_w)
                 imgui.text(f'Steps: {self.iteration}')
                 
-                imgui.text('Mask')
+                imgui.text('Máscara')
                 imgui.same_line(viz.label_w)
                 if imgui_utils.button('Flexible area', width=viz.button_w, enabled='image' in viz.result):
                     self.mode = 'flexible'
@@ -136,7 +136,7 @@ class DragWidget:
                 if imgui_utils.button('Reset mask', width=viz.button_w, enabled='image' in viz.result):
                     self.mask = torch.ones(self.height, self.width)
                 imgui.same_line()
-                _clicked, self.show_mask = imgui.checkbox('Show mask', self.show_mask)
+                _clicked, self.show_mask = imgui.checkbox('Mostrar Máscara', self.show_mask)
 
                 imgui.text(' ')
                 imgui.same_line(viz.label_w)
