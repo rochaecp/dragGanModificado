@@ -133,7 +133,7 @@ class Renderer:
             self._is_timing = False
         return res
 
-    # Carrega e armazena em cache redes neurais
+    # Carrega e armazena em cache as redes neurais
     def get_network(self, pkl, key, **tweak_kwargs):
         data = self._pkl_data.get(pkl, None)
         if data is None:
@@ -258,6 +258,17 @@ class Renderer:
             # Copia os dados da matriz m para o tensor de transformação de entrada
             G.synthesis.input.transform.copy_(torch.from_numpy(m))
 
+        # Carrega o w médio 
+        self.latent_avg = G.mapping.w_avg.detach().unsqueeze(0)
+        if self.latent_avg.dim() == 2:
+            self.latent_avg = self.latent_avg.unsqueeze(1).repeat(1,16,1)
+        
+        # Inicializa o contador de iterações e variáveis de controle
+        self.num_iteracoes = 0
+        self.ITERACAO_MAX = 2
+        self.realizou_otimizacao_rapida = False
+        self.qtd_manipulacoes = 0
+
         # Geração de Latentes Aleatórios
         self.w0_seed = w0_seed
         self.w_load = w_load
@@ -279,6 +290,13 @@ class Renderer:
             w = G.mapping(z, label, truncation_psi=trunc_psi, truncation_cutoff=trunc_cutoff)
         else:
             w = self.w_load.clone().to(self._device)
+
+        # Armazena o estado inicial do vetor latente w
+            # criar uma nova visão do tensor w que não requer gradiente
+            # detach(): não influenciará no cálculo do gradiente durante o processo de otimização
+            # clone(): cria uma cópia do tensor que é completamente nova e independente do original
+                # alterações futuras em self.w_inicial não afetarão o tensor w original
+        self.w_inicial = w.detach().clone()
 
         # Armazena o estado inicial do vetor latente w
         self.w0 = w.detach().clone()
@@ -371,8 +389,16 @@ class Renderer:
         
         # Reset de referências
         if reset:
+            print(45 * "*" + "Caí no reset! ") 
+            
             self.feat_refs = None  # referências de características
             self.points0_pt = None # referências de pontos
+            
+            # zera o contador de iterações
+            self.num_iteracoes = 0 
+            
+            # carrega atualiza o w_inicial com o w atual
+            self.w_inicial = self.w.detach().clone() 
         
         self.points = points
 
@@ -442,6 +468,11 @@ class Renderer:
                 # Itera sobre cada ponto na lista points. j é o índice e point são as coordenadas (y, x) do ponto.
                 for j, point in enumerate(points):
                     
+                    if self.num_iteracoes >= self.ITERACAO_MAX and len(points) == 1 and mask is None:
+                        r2 = 24
+                    else:
+                        r2 = 12
+
                     # Calcula um raio r baseado em r2 que será usado para definir uma região quadrada ao redor de cada ponto
                     r = round(r2 / 512 * h)
                     
@@ -496,7 +527,7 @@ class Renderer:
                 # Verifica se a norma (comprimento) do vetor direção é maior que um certo limite (o maior entre 2 / 512 * h e 2). 
                 # Se for, isso significa que o ponto ainda está significativamente longe do alvo, então res.stop é definido como 
                 # False para indicar que o processo de ajuste deve continuar.
-                if torch.linalg.norm(direction) > max(2 / 512 * h, 2):
+                if torch.linalg.norm(direction) > max(2 / 512 * h, 16):
                     res.stop = False
 
                 #  Se a norma da direção for maior que 1
@@ -563,18 +594,56 @@ class Renderer:
             
             # Se o processo não está marcado para parar (res.stop é False), então prossegue com a atualização do código latente
             if not res.stop:
-                # Zera os gradientes dos pesos do otimizador antes de calcular os novos gradientes. 
-                # Isso é necessário porque, por padrão, os gradientes no PyTorch se acumulam.                
-                self.w_optim.zero_grad()
-                
-                # Calcula os gradientes da perda em relação a todas as variáveis que requerem gradiente (definidas por requires_grad=True).
-                loss.backward()
 
-                # Aplica uma atualização aos parâmetros com base nos gradientes calculados. 
-                # Esta é a etapa onde o código latente ws é efetivamente ajustado na direção que minimiza a perda.
-                # Aplica uma etapa de otimização (atualização dos pesos) usando os gradientes calculados 
-                # pelo loss.backward(). 
-                self.w_optim.step()
+                if self.num_iteracoes == self.ITERACAO_MAX and not self.realizou_otimizacao_rapida:
+                    print(45 * "*" + "caí na inicialização 1 do self.w_dif_inicial ") 
+                    self.w_dif_inicial = self.w.detach() - self.w_inicial.detach()
+                    print(self.w_dif_inicial)
+                
+                # elif self.num_iteracoes == (self.ITERACAO_MAX + 1) and self.realizou_otimizacao_rapida and self.qtd_manipulacoes >= 1:
+                #     print(45 * "*" + "caí na inicialização 2 do self.w_dif_inicial ") 
+                #     self.w_dif_inicial = (self.w.detach() - self.w_inicial.detach()) / 2
+                #     print(self.w_dif_inicial) 
+               
+                # Otimização rápida de w
+                    # Realizada somente após as primeiras x iterações e apenas para 1 ponto de manipulação.
+                if self.num_iteracoes >= self.ITERACAO_MAX and len(points) == 1 and self.qtd_manipulacoes == 0:                
+                    with torch.no_grad():
+                        print(45 * "*" + "caí na otimização RÁPIDA ") 
+                        self.w = self.w.detach() + self.w_dif_inicial.detach() * 1.8
+                        self.realizou_otimizacao_rapida = True
+
+                # Otimização original de w 
+                else:
+                    print(45 * "*" + "caí na otimização NORMAL ") 
+                    print(45 * "*" + "PERDA: ") 
+                    print(loss)
+
+                    if self.realizou_otimizacao_rapida and self.num_iteracoes == 1:
+                        print(45 * "*" + "caí no self.update_lr(0.001) ") 
+                        self.w.requires_grad = True
+                        self.w_optim = torch.optim.Adam([self.w], lr=0.001)
+                        
+                    # Zera os gradientes dos pesos do otimizador antes de calcular os novos gradientes. 
+                    # Isso é necessário porque, por padrão, os gradientes no PyTorch se acumulam.                
+                    self.w_optim.zero_grad()
+                    
+                    # Calcula os gradientes da perda em relação a todas as variáveis que requerem gradiente (definidas por requires_grad=True).
+                    loss.backward()
+
+                    # Aplica uma atualização aos parâmetros com base nos gradientes calculados. 
+                    # Esta é a etapa onde o código latente ws é efetivamente ajustado na direção que minimiza a perda.
+                    # Aplica uma etapa de otimização (atualização dos pesos) usando os gradientes calculados 
+                    # pelo loss.backward(). 
+                    self.w_optim.step()               
+            else:
+                self.num_iteracoes = 0
+                self.w_inicial = self.w.detach().clone() 
+                self.qtd_manipulacoes += 1
+        
+        print(45 * "*" + "self.num_iteracoes ") 
+        print(self.num_iteracoes)
+        self.num_iteracoes += 1
 
         #----------------------------------------------------------------------------
         # Dimensione e converta para uint8 (Seleção e Normalização da Imagem)
