@@ -267,7 +267,7 @@ class Renderer:
         self.num_iteracoes = 0
         self.ITERACAO_MAX = 2
         self.realizou_otimizacao_rapida = False
-        self.qtd_manipulacoes = 0
+        self.qtd_manipulacoes = 0   
         self.distancias_anteriores = None
         self.distancia_invalida = False
         res.resetar = False
@@ -473,7 +473,7 @@ class Renderer:
                 # Itera sobre cada ponto na lista points. j é o índice e point são as coordenadas (y, x) do ponto.
                 for j, point in enumerate(points):
                     
-                    if self.num_iteracoes >= self.ITERACAO_MAX and len(points) == 1 and mask is None:
+                    if self.num_iteracoes >= self.ITERACAO_MAX and mask is None: #and len(points) == 1:
                         r2 = 24
                     else:
                         r2 = 12
@@ -618,7 +618,7 @@ class Renderer:
             # Se o processo não está marcado para parar (res.stop é False), então prossegue com a atualização do código latente
             if not res.stop:
 
-                if self.num_iteracoes == self.ITERACAO_MAX and not self.realizou_otimizacao_rapida:
+                if self.num_iteracoes == self.ITERACAO_MAX: # and not self.realizou_otimizacao_rapida:
                     print("caí na inicialização 1 do self.w_dif_inicial ") 
                     self.w_dif_inicial = self.w.detach() - self.w_inicial.detach()
                     print(self.w_dif_inicial)
@@ -630,7 +630,7 @@ class Renderer:
                
                 # Otimização rápida de w
                     # Realizada somente após as primeiras x iterações e apenas para 1 ponto de manipulação.
-                if self.num_iteracoes >= self.ITERACAO_MAX and len(points) == 1 and self.qtd_manipulacoes == 0:                
+                if self.num_iteracoes >= self.ITERACAO_MAX: # and self.qtd_manipulacoes == 0: # and len(points) == 1:
                     with torch.no_grad():
                         print("caí na otimização RÁPIDA ") 
                         self.w = self.w.detach() + self.w_dif_inicial.detach() * 1.8
@@ -641,7 +641,7 @@ class Renderer:
                     print("caí na otimização NORMAL ") 
                     print(f"PERDA: {loss}") 
 
-                    if self.realizou_otimizacao_rapida and self.num_iteracoes == 0:
+                    if self.num_iteracoes == 0:# and self.realizou_otimizacao_rapida:
                         print("caí no self.update_lr(0.001) ") 
                         self.w.requires_grad = True
                         self.w_optim = torch.optim.Adam([self.w], lr=0.001)
