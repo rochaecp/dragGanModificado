@@ -49,6 +49,7 @@ def clear_state(global_state, target=None):
     if 'point' in target:
         global_state['points'] = dict()
         print('Clear Points State!')
+        global_state['generator_params'].resetar = True
     if 'mask' in target:
         image_raw = global_state["images"]["image_raw"]
         global_state['mask'] = np.ones((image_raw.size[1], image_raw.size[0]),
@@ -85,6 +86,7 @@ def init_images(global_state):
         state['params']['lr']  # lr,
     )
 
+    state['generator_params'].resetar = False
     state['renderer']._render_drag_impl(state['generator_params'],
                                         is_drag=False,
                                         to_pil=True)
@@ -156,10 +158,10 @@ valid_checkpoints_dict = {
     for f in os.listdir(cache_dir)
     if (f.endswith('pkl') and osp.exists(osp.join(cache_dir, f)))
 }
-print(f'File under cache_dir ({cache_dir}):')
-print(os.listdir(cache_dir))
-print('Valid checkpoint file:')
-print(valid_checkpoints_dict)
+# print(f'File under cache_dir ({cache_dir}):')
+# print(os.listdir(cache_dir))
+# print('Valid checkpoint file:')
+# print(valid_checkpoints_dict)
 
 init_pkl = 'stylegan2_lions_512_pytorch'
 
@@ -519,9 +521,9 @@ with gr.Blocks() as app:
             # reverse points order
             p_to_opt = reverse_point_pairs(p_in_pixels)
             t_to_opt = reverse_point_pairs(t_in_pixels)
-            print('Running with:')
-            print(f'    Source: {p_in_pixels}')
-            print(f'    Target: {t_in_pixels}')
+            # print('Running with:')
+            # print(f'    Source: {p_in_pixels}')
+            # print(f'    Target: {t_in_pixels}')
             step_idx = 0
             while True:
                 if global_state["temporal_params"]["stop"]:
@@ -552,7 +554,7 @@ with gr.Blocks() as app:
                     to_pil=True)
 
                 if step_idx % global_state['draw_interval'] == 0:
-                    print('Current Source:')
+                    #print('Current Source:')
                     for key_point, p_i, t_i in zip(valid_points, p_to_opt,
                                                    t_to_opt):
                         global_state["points"][key_point]["start_temp"] = [
@@ -565,7 +567,7 @@ with gr.Blocks() as app:
                         ]
                         start_temp = global_state["points"][key_point][
                             "start_temp"]
-                        print(f'    {start_temp}')
+                        #print(f'    {start_temp}')
 
                     image_result = global_state['generator_params']['image']
                     image_draw = update_image_draw(
@@ -803,13 +805,13 @@ with gr.Blocks() as app:
         point_idx = get_latest_points_pair(points)
         if point_idx is None:
             points[0] = {'start': xy, 'target': None}
-            print(f'Click Image - Start - {xy}')
+            #print(f'Click Image - Start - {xy}')
         elif points[point_idx].get('target', None) is None:
             points[point_idx]['target'] = xy
-            print(f'Click Image - Target - {xy}')
+            #print(f'Click Image - Target - {xy}')
         else:
             points[point_idx + 1] = {'start': xy, 'target': None}
-            print(f'Click Image - Start - {xy}')
+            #print(f'Click Image - Start - {xy}')
 
         image_raw = global_state['images']['image_raw']
         image_draw = update_image_draw(
@@ -838,6 +840,8 @@ with gr.Blocks() as app:
 
         renderer: Renderer = global_state["renderer"]
         renderer.feat_refs = None
+
+        global_state['generator_params'].resetar = True
 
         image_raw = global_state['images']['image_raw']
         image_draw = update_image_draw(image_raw, {}, global_state['mask'],

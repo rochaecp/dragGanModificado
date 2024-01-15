@@ -214,7 +214,7 @@ class Renderer:
         x = torch.nn.functional.embedding(x, cmap)
         return x
 
-    # Inicializa e configura a rede neural
+    # Inicializa e configura a rede neural - executada somente quando o gradio é inicializado
     def init_network(self, res,
         pkl             = None,     # Caminho ou identificador para o arquivo de modelo pre-treinado
         w0_seed         = 0,        # Parâmetros relacionados a códigos latentes iniciais
@@ -268,6 +268,9 @@ class Renderer:
         self.ITERACAO_MAX = 2
         self.realizou_otimizacao_rapida = False
         self.qtd_manipulacoes = 0
+        self.distancias_anteriores = None
+        self.distancia_invalida = False
+        res.resetar = False
 
         # Geração de Latentes Aleatórios
         self.w0_seed = w0_seed
@@ -389,17 +392,19 @@ class Renderer:
         
         # Reset de referências
         if reset:
-            print(45 * "*" + "Caí no reset! ") 
-            
             self.feat_refs = None  # referências de características
             self.points0_pt = None # referências de pontos
-            
-            # zera o contador de iterações
-            self.num_iteracoes = 0 
-            
-            # carrega atualiza o w_inicial com o w atual
-            self.w_inicial = self.w.detach().clone() 
-        
+            self.qtd_manipulacoes = 0
+
+        if res.resetar:
+            print("\n\nResetei!")
+            self.num_iteracoes = 0 # zera o contador de iterações
+            self.w_inicial = self.w.detach().clone() # carrega atualiza o w_inicial com o w atual
+            self.distancias_anteriores = None
+            #self.qtd_manipulacoes += 1
+            self.distancia_invalida = False
+            res.resetar = False        
+
         self.points = points
 
         # Cria um tensor label onde todos elementos são zero
@@ -517,18 +522,36 @@ class Renderer:
             # Variável booleana que determinará se o processo de ajuste deve continuar ou parar
             res.stop = True
 
+            if self.distancias_anteriores is None:
+                # Se for a primeira iteração, inicialize distancias_anteriores com valores infinitos
+                #self.distancias_anteriores = [float('inf')] * len(points)
+                self.distancias_anteriores = torch.tensor([float('inf')] * len(points), dtype=torch.double)
+                print("\nAlimentei o distancias_anteriores com infinito")
+
             # Itera sobre cada ponto na lista points. j é o índice e point são as coordenadas (y, x) do ponto.
             for j, point in enumerate(points):
 
                 # Para cada ponto, calcula a diferença vetorial entre o ponto atual e seu alvo correspondente em targets
                 # Essa diferença é a "direção" que o ponto precisaria se mover para alcançar o alvo
                 direction = torch.Tensor([targets[j][1] - point[1], targets[j][0] - point[0]])
+                distancia_atual = torch.linalg.norm(direction)
 
+                #dist_test = (self.distancias_anteriores[j] / 1000) * 1000 - (distancia_atual / 1000) * 1000
+                #if (dist_test) > 0.1 and self.num_iteracoes > (self.ITERACAO_MAX + 5):
+                if torch.round(distancia_atual.double() * 1000) > torch.round(self.distancias_anteriores[j].double() * 1000) and self.num_iteracoes > (self.ITERACAO_MAX + 5):
+                    print("DISTÂNCIA ENTRE P E T AUMENTOU!")
+                    self.distancia_invalida = True
+                    res.stop = True
                 # Verifica se a norma (comprimento) do vetor direção é maior que um certo limite (o maior entre 2 / 512 * h e 2). 
                 # Se for, isso significa que o ponto ainda está significativamente longe do alvo, então res.stop é definido como 
                 # False para indicar que o processo de ajuste deve continuar.
-                if torch.linalg.norm(direction) > max(2 / 512 * h, 16):
+                elif torch.linalg.norm(direction) > max(2 / 512 * h, 2) and not self.distancia_invalida:# and distancia_atual < self.distancias_anteriores[j]:
                     res.stop = False
+                
+                print(f"torch.round(distancia_atual.double() * 1000): {torch.round(distancia_atual.double() * 1000)}")
+                print(f"torch.round(self.distancias_anteriores[j].double() * 1000) = {torch.round(self.distancias_anteriores[j].double() * 1000)}")
+                print(f"j = {j}")
+                self.distancias_anteriores[j] = distancia_atual
 
                 #  Se a norma da direção for maior que 1
                 if torch.linalg.norm(direction) > 1:
@@ -596,12 +619,12 @@ class Renderer:
             if not res.stop:
 
                 if self.num_iteracoes == self.ITERACAO_MAX and not self.realizou_otimizacao_rapida:
-                    print(45 * "*" + "caí na inicialização 1 do self.w_dif_inicial ") 
+                    print("caí na inicialização 1 do self.w_dif_inicial ") 
                     self.w_dif_inicial = self.w.detach() - self.w_inicial.detach()
                     print(self.w_dif_inicial)
                 
                 # elif self.num_iteracoes == (self.ITERACAO_MAX + 1) and self.realizou_otimizacao_rapida and self.qtd_manipulacoes >= 1:
-                #     print(45 * "*" + "caí na inicialização 2 do self.w_dif_inicial ") 
+                #     print("caí na inicialização 2 do self.w_dif_inicial ") 
                 #     self.w_dif_inicial = (self.w.detach() - self.w_inicial.detach()) / 2
                 #     print(self.w_dif_inicial) 
                
@@ -609,20 +632,21 @@ class Renderer:
                     # Realizada somente após as primeiras x iterações e apenas para 1 ponto de manipulação.
                 if self.num_iteracoes >= self.ITERACAO_MAX and len(points) == 1 and self.qtd_manipulacoes == 0:                
                     with torch.no_grad():
-                        print(45 * "*" + "caí na otimização RÁPIDA ") 
+                        print("caí na otimização RÁPIDA ") 
                         self.w = self.w.detach() + self.w_dif_inicial.detach() * 1.8
                         self.realizou_otimizacao_rapida = True
 
                 # Otimização original de w 
                 else:
-                    print(45 * "*" + "caí na otimização NORMAL ") 
-                    print(45 * "*" + "PERDA: ") 
-                    print(loss)
+                    print("caí na otimização NORMAL ") 
+                    print(f"PERDA: {loss}") 
 
-                    if self.realizou_otimizacao_rapida and self.num_iteracoes == 1:
-                        print(45 * "*" + "caí no self.update_lr(0.001) ") 
+                    if self.realizou_otimizacao_rapida and self.num_iteracoes == 0:
+                        print("caí no self.update_lr(0.001) ") 
                         self.w.requires_grad = True
                         self.w_optim = torch.optim.Adam([self.w], lr=0.001)
+                        self.feat_refs = None  # referências de características
+                        self.points0_pt = None # referências de pontos                        
                         
                     # Zera os gradientes dos pesos do otimizador antes de calcular os novos gradientes. 
                     # Isso é necessário porque, por padrão, os gradientes no PyTorch se acumulam.                
@@ -637,12 +661,12 @@ class Renderer:
                     # pelo loss.backward(). 
                     self.w_optim.step()               
             else:
-                self.num_iteracoes = 0
-                self.w_inicial = self.w.detach().clone() 
+            #     self.w_inicial = self.w.detach().clone() # carrega atualiza o w_inicial com o w atual
                 self.qtd_manipulacoes += 1
+            #     self.distancias_anteriores = None
         
-        print(45 * "*" + "self.num_iteracoes ") 
-        print(self.num_iteracoes)
+        print(f"\nself.num_iteracoes: {self.num_iteracoes}") 
+        print(f"self.qtd_manipulacoes: {self.qtd_manipulacoes}")
         self.num_iteracoes += 1
 
         #----------------------------------------------------------------------------
