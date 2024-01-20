@@ -226,7 +226,7 @@ class Renderer:
         trunc_psi       = 0.7,      # Parâmetro de controle para a geração de imagem
         trunc_cutoff    = None,     # Parâmetro de controle para a geração de imagem
         input_transform = None,     # Transformação de entrada
-        lr              = 0.001,    # Taxa de aprendizado para ajustes na rede
+        lr              = 0.003,    # Taxa de aprendizado para ajustes na rede
         **kwargs
         ):
 
@@ -272,6 +272,8 @@ class Renderer:
         self.qtd_manipulacoes = 0   
         self.distancias_anteriores = None
         self.distancia_invalida = False
+        self.qtd_dist_invalida = 1
+        self.exibiu_log = False
         res.resetar = False
         self.start_time = 0
         self.gpu_memory_allocated_before = 0
@@ -353,7 +355,7 @@ class Renderer:
         reg             = 0,
         feature_idx     = 5,
         r1              = 3,
-        r2              = 12,
+        r2              = 36,
         random_seed     = 0,
         noise_mode      = 'const',
         trunc_psi       = 0.7,
@@ -411,6 +413,8 @@ class Renderer:
             self.num_iteracoes = 0 # zera o contador de iterações
             self.w_inicial = self.w.detach().clone() # carrega atualiza o w_inicial com o w atual
             self.distancias_anteriores = None
+            self.qtd_dist_invalida = 1
+            self.exibiu_log = False
             #self.qtd_manipulacoes += 1
             self.distancia_invalida = False
             res.resetar = False
@@ -482,12 +486,6 @@ class Renderer:
                 
                 # Itera sobre cada ponto na lista points. j é o índice e point são as coordenadas (y, x) do ponto.
                 for j, point in enumerate(points):
-                    
-                    if self.num_iteracoes >= self.ITERACAO_MAX and mask is None: #and len(points) == 1:
-                        r2 = 24
-                    else:
-                        r2 = 12
-
                     # Calcula um raio r baseado em r2 que será usado para definir uma região quadrada ao redor de cada ponto
                     r = round(r2 / 512 * h)
                     
@@ -546,16 +544,17 @@ class Renderer:
                 direction = torch.Tensor([targets[j][1] - point[1], targets[j][0] - point[0]])
                 distancia_atual = torch.linalg.norm(direction)
 
-                #dist_test = (self.distancias_anteriores[j] / 1000) * 1000 - (distancia_atual / 1000) * 1000
-                #if (dist_test) > 0.1 and self.num_iteracoes > (self.ITERACAO_MAX + 5):
-                if torch.round(distancia_atual.double() * 1000) > torch.round(self.distancias_anteriores[j].double() * 1000) and self.num_iteracoes > (self.ITERACAO_MAX + 5): # and False:
-                    print("DISTÂNCIA ENTRE P E T AUMENTOU!")
+                if torch.round(distancia_atual.double() * 1000) > torch.round(self.distancias_anteriores[j].double() * 1000):# and False:
+                    print(80 * "=" + "DISTÂNCIA ENTRE P E T AUMENTOU!")
                     self.distancia_invalida = True
-                    res.stop = True
+                    self.w_inicial = self.w.detach().clone()
+                    self.num_iteracoes = 0
+                    self.qtd_dist_invalida += 1
+                    res.stop = False
                 # Verifica se a norma (comprimento) do vetor direção é maior que um certo limite (o maior entre 2 / 512 * h e 2). 
                 # Se for, isso significa que o ponto ainda está significativamente longe do alvo, então res.stop é definido como 
                 # False para indicar que o processo de ajuste deve continuar.
-                elif torch.linalg.norm(direction) > max(2 / 512 * h, 2) and not self.distancia_invalida:# and distancia_atual < self.distancias_anteriores[j]:
+                elif torch.linalg.norm(direction) > max(2 / 512 * h, 2):
                     res.stop = False
                 
                 print(f"torch.round(distancia_atual.double() * 1000): {torch.round(distancia_atual.double() * 1000)}")
@@ -640,21 +639,21 @@ class Renderer:
                
                 # Otimização rápida de w
                     # Realizada somente após as primeiras x iterações e apenas para 1 ponto de manipulação.
-                if self.num_iteracoes >= self.ITERACAO_MAX: # and False: # and self.qtd_manipulacoes == 0: # and len(points) == 1:
+                if self.num_iteracoes >= self.ITERACAO_MAX: # and False
                     with torch.no_grad():
-                        print("caí na otimização RÁPIDA ") 
-                        self.w = self.w.detach() + self.w_dif_inicial.detach() * 1.8
+                        print(80 * "=" + "caí na otimização RÁPIDA ") 
+                        self.w = self.w.detach() + self.w_dif_inicial.detach() / self.qtd_dist_invalida
                         self.realizou_otimizacao_rapida = True
 
                 # Otimização original de w 
                 else:
-                    print("caí na otimização NORMAL ") 
+                    print(80 * "=" + "caí na otimização NORMAL ") 
                     print(f"PERDA: {loss}") 
 
                     if self.num_iteracoes == 0: # and False:# and self.realizou_otimizacao_rapida:
-                        print("caí no self.update_lr(0.001) ") 
+                        print(80 * "=" + "caí na reinicialização do otimizador Adam  ") 
                         self.w.requires_grad = True
-                        self.w_optim = torch.optim.Adam([self.w], lr=0.001)
+                        self.w_optim = torch.optim.Adam([self.w], lr=max(0.001, 0.003/self.qtd_dist_invalida))
                         self.feat_refs = None  # referências de características
                         self.points0_pt = None # referências de pontos                        
                         
@@ -673,62 +672,66 @@ class Renderer:
             else:
                 self.qtd_manipulacoes += 1
             
-                # Medir o tempo de execução
-                end_time = time.time() # Captura o tempo final
-                elapsed_time = end_time - self.start_time  # Calcula a duração em segundos
-                
-                # Medir o consumo de memória
-                self.gpu_memory_allocated_after = torch.cuda.memory_allocated()
-                self.gpu_memory_reserved_after = torch.cuda.memory_reserved()
-                
-                gpu_memory_allocated_used = self.gpu_memory_allocated_after - self.gpu_memory_allocated_before
-                gpu_memory_reserved_used = self.gpu_memory_reserved_after - self.gpu_memory_reserved_before
+                if not self.exibiu_log:
+                    self.exibiu_log = True
+                    # Medir o tempo de execução
+                    end_time = time.time() # Captura o tempo final
+                    elapsed_time = end_time - self.start_time  # Calcula a duração em segundos
+                    
+                    # Medir o consumo de memória
+                    self.gpu_memory_allocated_after = torch.cuda.memory_allocated()
+                    self.gpu_memory_reserved_after = torch.cuda.memory_reserved()
+                    
+                    gpu_memory_allocated_used = self.gpu_memory_allocated_after - self.gpu_memory_allocated_before
+                    gpu_memory_reserved_used = self.gpu_memory_reserved_after - self.gpu_memory_reserved_before
 
 
-                # Obtendo informações de memória
-                memory_info = psutil.virtual_memory()
+                    # Obtendo informações de memória
+                    memory_info = psutil.virtual_memory()
 
-                # Memória total (em bytes)
-                total_ram_memory = memory_info.total / (1024 ** 2)  # Convertendo para MB
+                    # Memória total (em bytes)
+                    total_ram_memory = memory_info.total / (1024 ** 2)  # Convertendo para MB
 
-                # Memória utilizada (em bytes)
-                used_ram_memory = memory_info.used / (1024 ** 2)  # Convertendo para MB
+                    # Memória utilizada (em bytes)
+                    used_ram_memory = memory_info.used / (1024 ** 2)  # Convertendo para MB
 
-                # Memória disponível (em bytes)
-                available_ram_memory = memory_info.available / (1024 ** 2)  # Convertendo para MB
+                    # Memória disponível (em bytes)
+                    available_ram_memory = memory_info.available / (1024 ** 2)  # Convertendo para MB
 
-                # Percentual de memória utilizada
-                percent_used = memory_info.percent
+                    # Percentual de memória utilizada
+                    percent_used = memory_info.percent
 
-                total_gpu_memory = torch.cuda.get_device_properties(0).total_memory
-                current_memory_allocated = torch.cuda.memory_allocated(0)
-                current_memory_reserved = torch.cuda.memory_reserved(0)
+                    total_gpu_memory = torch.cuda.get_device_properties(0).total_memory
+                    current_memory_allocated = torch.cuda.memory_allocated(0)
+                    current_memory_reserved = torch.cuda.memory_reserved(0)
 
-                # Convertendo bytes para megabytes
-                total_gpu_memory_mb = total_gpu_memory / (1024 ** 2)
-                current_memory_allocated_mb = current_memory_allocated / (1024 ** 2)
-                current_memory_reserved_mb = current_memory_reserved / (1024 ** 2)
+                    # Convertendo bytes para megabytes
+                    total_gpu_memory_mb = total_gpu_memory / (1024 ** 2)
+                    current_memory_allocated_mb = current_memory_allocated / (1024 ** 2)
+                    current_memory_reserved_mb = current_memory_reserved / (1024 ** 2)
 
-                # Imprimindo informações
+                    # Imprimindo informações
 
-                print(50 * "*")
-                print(f"Tempo decorrido: {elapsed_time} segundos")  # Exibe o tempo decorrido
-                print(f"Memória da GPU alocada usada: {gpu_memory_allocated_used / 1024**2} MB")
-                print(f"Memória da GPU reservada usada: {gpu_memory_reserved_used / 1024**2} MB")            
+                    print(50 * "*")
+                    print(f"Tempo decorrido: {elapsed_time} segundos")  # Exibe o tempo decorrido
+                    print(f"Memória da GPU alocada usada: {gpu_memory_allocated_used / 1024**2} MB")
+                    print(f"Memória da GPU reservada usada: {gpu_memory_reserved_used / 1024**2} MB")            
 
-                print(f"Memória total da GPU: {total_gpu_memory_mb:.2f} MB")
-                print(f"Memória da GPU atualmente alocada: {current_memory_allocated_mb:.2f} MB")
-                print(f"Memória da GPU atualmente reservada: {current_memory_reserved_mb:.2f} MB")                
+                    print(f"Memória total da GPU: {total_gpu_memory_mb:.2f} MB")
+                    print(f"Memória da GPU atualmente alocada: {current_memory_allocated_mb:.2f} MB")
+                    print(f"Memória da GPU atualmente reservada: {current_memory_reserved_mb:.2f} MB")                
 
-                print(f"Memória RAM Total: {total_ram_memory:.2f} MB")
-                print(f"Memória RAM Usada: {used_ram_memory:.2f} MB")
-                print(f"Memória RAM Disponível: {available_ram_memory:.2f} MB")
-                print(f"Percentual de Memória RAM Usada: {percent_used}%")
+                    print(f"Memória RAM Total: {total_ram_memory:.2f} MB")
+                    print(f"Memória RAM Usada: {used_ram_memory:.2f} MB")
+                    print(f"Memória RAM Disponível: {available_ram_memory:.2f} MB")
+                    print(f"Percentual de Memória RAM Usada: {percent_used}%")
 
-                print(50 * "*")
+                    print(50 * "*")
 
         print(f"\nself.num_iteracoes: {self.num_iteracoes}") 
         print(f"self.qtd_manipulacoes: {self.qtd_manipulacoes}")
+        print(f"self.qtd_dist_invalida: {self.qtd_dist_invalida}")
+        
         self.num_iteracoes += 1
 
         #----------------------------------------------------------------------------
