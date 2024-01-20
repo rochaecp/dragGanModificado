@@ -21,7 +21,7 @@ class LatentWidget:
         self.seed       = 0
         self.w_plus     = True
         self.reg        = 0
-        self.lr         = 0.003
+        self.lr         = 0.002
         self.w_path     = ''
         self.w_load     = None
         self.defer_frames   = 0

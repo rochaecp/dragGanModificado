@@ -226,7 +226,7 @@ class Renderer:
         trunc_psi       = 0.7,      # Parâmetro de controle para a geração de imagem
         trunc_cutoff    = None,     # Parâmetro de controle para a geração de imagem
         input_transform = None,     # Transformação de entrada
-        lr              = 0.003,    # Taxa de aprendizado para ajustes na rede
+        lr              = 0.002,    # Taxa de aprendizado para ajustes na rede
         **kwargs
         ):
 
@@ -260,19 +260,11 @@ class Renderer:
             # Copia os dados da matriz m para o tensor de transformação de entrada
             G.synthesis.input.transform.copy_(torch.from_numpy(m))
 
-        # Carrega o w médio 
-        self.latent_avg = G.mapping.w_avg.detach().unsqueeze(0)
-        if self.latent_avg.dim() == 2:
-            self.latent_avg = self.latent_avg.unsqueeze(1).repeat(1,16,1)
-        
         # Inicializa o contador de iterações e variáveis de controle
         self.num_iteracoes = 0
         self.ITERACAO_MAX = 2
-        self.realizou_otimizacao_rapida = False
-        self.qtd_manipulacoes = 0   
         self.distancias_anteriores = None
         self.distancia_invalida = False
-        self.qtd_dist_invalida = 1
         self.exibiu_log = False
         res.resetar = False
         self.start_time = 0
@@ -327,8 +319,8 @@ class Renderer:
             # Permite ajustar os valores de w para minimizar a função de perda durante a otimização
         self.w.requires_grad = True
         
-            # torch.optim.Adam: chamada ao otimizador Adam 
-                # (uma variante do método de descida de gradiente estocástico que ajusta cada parâmetro com taxas de aprendizado individualmente adaptáveis)
+        # torch.optim.Adam: chamada ao otimizador Adam 
+            # (uma variante do método de descida de gradiente estocástico que ajusta cada parâmetro com taxas de aprendizado individualmente adaptáveis)
             # [self.w]: lista de tensores com um tensor
             # lr: taxa de aprendizado (learning rate) em float - influencia a velocidade e a qualidade da convergência do processo de otimização
                 # Uma taxa de aprendizado muito alta pode fazer com que o otimizador "pule" o mínimo, 
@@ -401,7 +393,6 @@ class Renderer:
         if reset:
             self.feat_refs = None  # referências de características
             self.points0_pt = None # referências de pontos
-            self.qtd_manipulacoes = 0
             
             print(70 * "*" + "Inicializa a contagem de tempo e de memória")
             self.start_time = time.time() ## INICIAR O TIMER AQUI!
@@ -413,9 +404,7 @@ class Renderer:
             self.num_iteracoes = 0 # zera o contador de iterações
             self.w_inicial = self.w.detach().clone() # carrega atualiza o w_inicial com o w atual
             self.distancias_anteriores = None
-            self.qtd_dist_invalida = 1
             self.exibiu_log = False
-            #self.qtd_manipulacoes += 1
             self.distancia_invalida = False
             res.resetar = False
 
@@ -424,7 +413,6 @@ class Renderer:
         # Cria um tensor label onde todos elementos são zero
             # [1, G.c_dim]: fortmato do tensor a ser criado
                 # 1 é a dimensão do lote - uma imagem por vez
-                # 
         label = torch.zeros([1, G.c_dim], device=self._device)
         
         # Executa a rede de síntese
@@ -544,12 +532,11 @@ class Renderer:
                 direction = torch.Tensor([targets[j][1] - point[1], targets[j][0] - point[0]])
                 distancia_atual = torch.linalg.norm(direction)
 
-                if torch.round(distancia_atual.double() * 1000) > torch.round(self.distancias_anteriores[j].double() * 1000):# and False:
+                if torch.round(distancia_atual.double() * 1000) > torch.round(self.distancias_anteriores[j].double() * 1000):
                     print(80 * "=" + "DISTÂNCIA ENTRE P E T AUMENTOU!")
                     self.distancia_invalida = True
                     self.w_inicial = self.w.detach().clone()
                     self.num_iteracoes = 0
-                    self.qtd_dist_invalida += 1
                     res.stop = False
                 # Verifica se a norma (comprimento) do vetor direção é maior que um certo limite (o maior entre 2 / 512 * h e 2). 
                 # Se for, isso significa que o ponto ainda está significativamente longe do alvo, então res.stop é definido como 
@@ -557,9 +544,6 @@ class Renderer:
                 elif torch.linalg.norm(direction) > max(2 / 512 * h, 2):
                     res.stop = False
                 
-                print(f"torch.round(distancia_atual.double() * 1000): {torch.round(distancia_atual.double() * 1000)}")
-                print(f"torch.round(self.distancias_anteriores[j].double() * 1000) = {torch.round(self.distancias_anteriores[j].double() * 1000)}")
-                print(f"j = {j}")
                 self.distancias_anteriores[j] = distancia_atual
 
                 #  Se a norma da direção for maior que 1
@@ -627,33 +611,27 @@ class Renderer:
             # Se o processo não está marcado para parar (res.stop é False), então prossegue com a atualização do código latente
             if not res.stop:
 
-                if self.num_iteracoes == self.ITERACAO_MAX: # and not self.realizou_otimizacao_rapida:
+                if self.num_iteracoes == self.ITERACAO_MAX:
                     print("caí na inicialização 1 do self.w_dif_inicial ") 
                     self.w_dif_inicial = self.w.detach() - self.w_inicial.detach()
                     print(self.w_dif_inicial)
-                
-                # elif self.num_iteracoes == (self.ITERACAO_MAX + 1) and self.realizou_otimizacao_rapida and self.qtd_manipulacoes >= 1:
-                #     print("caí na inicialização 2 do self.w_dif_inicial ") 
-                #     self.w_dif_inicial = (self.w.detach() - self.w_inicial.detach()) / 2
-                #     print(self.w_dif_inicial) 
                
                 # Otimização rápida de w
                     # Realizada somente após as primeiras x iterações e apenas para 1 ponto de manipulação.
-                if self.num_iteracoes >= self.ITERACAO_MAX: # and False
+                if self.num_iteracoes >= self.ITERACAO_MAX and not self.distancia_invalida:
                     with torch.no_grad():
                         print(80 * "=" + "caí na otimização RÁPIDA ") 
-                        self.w = self.w.detach() + self.w_dif_inicial.detach() / self.qtd_dist_invalida
-                        self.realizou_otimizacao_rapida = True
+                        self.w = self.w.detach() + self.w_dif_inicial.detach()
 
                 # Otimização original de w 
                 else:
                     print(80 * "=" + "caí na otimização NORMAL ") 
                     print(f"PERDA: {loss}") 
 
-                    if self.num_iteracoes == 0: # and False:# and self.realizou_otimizacao_rapida:
+                    if self.num_iteracoes == 0:
                         print(80 * "=" + "caí na reinicialização do otimizador Adam  ") 
                         self.w.requires_grad = True
-                        self.w_optim = torch.optim.Adam([self.w], lr=max(0.001, 0.003/self.qtd_dist_invalida))
+                        self.w_optim = torch.optim.Adam([self.w], lr=0.001)
                         self.feat_refs = None  # referências de características
                         self.points0_pt = None # referências de pontos                        
                         
@@ -670,7 +648,6 @@ class Renderer:
                     # pelo loss.backward(). 
                     self.w_optim.step()               
             else:
-                self.qtd_manipulacoes += 1
             
                 if not self.exibiu_log:
                     self.exibiu_log = True
@@ -729,8 +706,6 @@ class Renderer:
                     print(50 * "*")
 
         print(f"\nself.num_iteracoes: {self.num_iteracoes}") 
-        print(f"self.qtd_manipulacoes: {self.qtd_manipulacoes}")
-        print(f"self.qtd_dist_invalida: {self.qtd_dist_invalida}")
         
         self.num_iteracoes += 1
 

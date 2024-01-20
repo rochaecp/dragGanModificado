@@ -24,7 +24,7 @@ class DragWidget:
         self.lambda_mask    = 20
         self.feature_idx    = 5
         self.r1             = 3
-        self.r2             = 12
+        self.r2             = 36
         self.path           = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '_screenshots'))
         self.defer_frames   = 0
         self.disabled_time  = 0

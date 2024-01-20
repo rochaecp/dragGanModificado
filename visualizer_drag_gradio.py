@@ -191,7 +191,7 @@ with gr.Blocks() as app:
             "latent_space": "w+",
             "trunc_psi": 0.7,
             "trunc_cutoff": None,
-            "lr": 0.003,
+            "lr": 0.002,
         },
         "device": device,
         "draw_interval": 1,
