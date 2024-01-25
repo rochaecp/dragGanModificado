@@ -262,6 +262,7 @@ class Renderer:
 
         # Inicializa o contador de iterações e variáveis de controle
         self.num_iteracoes = 0
+        self.num_iteracoes_tot = 0
         self.ITERACAO_MAX = 2
         self.distancias_anteriores = None
         self.distancia_invalida = False
@@ -402,6 +403,7 @@ class Renderer:
         if res.resetar:
             print("\n\nResetei!")
             self.num_iteracoes = 0 # zera o contador de iterações
+            self.num_iteracoes_tot = 0
             self.w_inicial = self.w.detach().clone() # carrega atualiza o w_inicial com o w atual
             self.distancias_anteriores = None
             self.exibiu_log = False
@@ -689,7 +691,7 @@ class Renderer:
                     # Imprimindo informações
 
                     print(50 * "*")
-                    print(f"Total de Iterações utilizadas: {self.num_iteracoes}")  
+                    print(f"Total de Iterações utilizadas: {self.num_iteracoes_tot}")  
                     print(f"Tempo decorrido: {elapsed_time} segundos")  # Exibe o tempo decorrido
                     print(f"Memória da GPU alocada usada: {gpu_memory_allocated_used / 1024**2} MB")
                     print(f"Memória da GPU reservada usada: {gpu_memory_reserved_used / 1024**2} MB")            
@@ -708,6 +710,7 @@ class Renderer:
         print(f"\nself.num_iteracoes: {self.num_iteracoes}") 
         
         self.num_iteracoes += 1
+        self.num_iteracoes_tot += 1
 
         #----------------------------------------------------------------------------
         # Dimensione e converta para uint8 (Seleção e Normalização da Imagem)
