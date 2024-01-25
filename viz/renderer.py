@@ -520,7 +520,6 @@ class Renderer:
 
             if self.distancias_anteriores is None:
                 # Se for a primeira iteração, inicialize distancias_anteriores com valores infinitos
-                #self.distancias_anteriores = [float('inf')] * len(points)
                 self.distancias_anteriores = torch.tensor([float('inf')] * len(points), dtype=torch.double)
                 print("\nAlimentei o distancias_anteriores com infinito")
 
@@ -690,6 +689,7 @@ class Renderer:
                     # Imprimindo informações
 
                     print(50 * "*")
+                    print(f"Total de Iterações utilizadas: {self.num_iteracoes}")  
                     print(f"Tempo decorrido: {elapsed_time} segundos")  # Exibe o tempo decorrido
                     print(f"Memória da GPU alocada usada: {gpu_memory_allocated_used / 1024**2} MB")
                     print(f"Memória da GPU reservada usada: {gpu_memory_reserved_used / 1024**2} MB")            
