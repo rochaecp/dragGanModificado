@@ -139,14 +139,14 @@ class Renderer:
     def get_network(self, pkl, key, **tweak_kwargs):
         data = self._pkl_data.get(pkl, None)
         if data is None:
-            print(f'Loading "{pkl}"... ', end='', flush=True)
+            #print(f'Loading "{pkl}"... ', end='', flush=True)
             try:
                 with dnnlib.util.open_url(pkl, verbose=False) as f:
                     data = legacy.load_network_pkl(f)
-                print('Done.')
+                #print('Done.')
             except:
                 data = CapturedException()
-                print('Failed!')
+                #print('Failed!')
             self._pkl_data[pkl] = data
             self._ignore_timing()
         if isinstance(data, CapturedException):
@@ -166,8 +166,8 @@ class Renderer:
                 else:
                     raise NameError('Cannot infer model type from pkl name!')
 
-                print(data[key].init_args)
-                print(data[key].init_kwargs)
+                #print(data[key].init_args)
+                #print(data[key].init_kwargs)
                 if 'stylegan_human' in pkl:
                     net = Generator(*data[key].init_args, **data[key].init_kwargs, square=False, padding=True)
                 else:
@@ -262,7 +262,9 @@ class Renderer:
 
         # Inicializa o contador de iterações e variáveis de controle
         self.num_iteracoes = 0
-        self.num_iteracoes_tot = 0
+        self.num_tot_iteracoes_trad = 0
+        self.num_tot_iteracoes_prop = 0
+        self.dist_ini_pi_ti = None
         self.ITERACAO_MAX = 2
         self.distancias_anteriores = None
         self.distancia_invalida = False
@@ -336,8 +338,8 @@ class Renderer:
     def update_lr(self, lr):
         del self.w_optim
         self.w_optim = torch.optim.Adam([self.w], lr=lr)
-        print(f'Rebuild optimizer with lr: {lr}')
-        print('    Remain feat_refs and points0_pt')
+        #print(f'Rebuild optimizer with lr: {lr}')
+        #print('    Remain feat_refs and points0_pt')
 
     # Implementa a lógica de renderização
     def _render_drag_impl(self, res,    # res recebe global_state['generator_params']
@@ -395,15 +397,17 @@ class Renderer:
             self.feat_refs = None  # referências de características
             self.points0_pt = None # referências de pontos
             
-            print(70 * "*" + "Inicializa a contagem de tempo e de memória")
+            #print(70 * "*" + "Inicializa a contagem de tempo e de memória")
             self.start_time = time.time() ## INICIAR O TIMER AQUI!
             self.gpu_memory_allocated_before = torch.cuda.memory_allocated()
             self.gpu_memory_reserved_before = torch.cuda.memory_reserved()    
 
         if res.resetar:
-            print("\n\nResetei!")
+            #print("\n\nResetei!")
             self.num_iteracoes = 0 # zera o contador de iterações
-            self.num_iteracoes_tot = 0
+            self.num_tot_iteracoes_trad = 0
+            self.num_tot_iteracoes_prop = 0
+            self.dist_ini_pi_ti = None
             self.w_inicial = self.w.detach().clone() # carrega atualiza o w_inicial com o w atual
             self.distancias_anteriores = None
             self.exibiu_log = False
@@ -523,7 +527,10 @@ class Renderer:
             if self.distancias_anteriores is None:
                 # Se for a primeira iteração, inicialize distancias_anteriores com valores infinitos
                 self.distancias_anteriores = torch.tensor([float('inf')] * len(points), dtype=torch.double)
-                print("\nAlimentei o distancias_anteriores com infinito")
+                #print("\nAlimentei o distancias_anteriores com infinito")
+
+            if self.dist_ini_pi_ti is None:
+                self.dist_ini_pi_ti = torch.tensor([0] * len(points), dtype=torch.double)
 
             # Itera sobre cada ponto na lista points. j é o índice e point são as coordenadas (y, x) do ponto.
             for j, point in enumerate(points):
@@ -532,9 +539,12 @@ class Renderer:
                 # Essa diferença é a "direção" que o ponto precisaria se mover para alcançar o alvo
                 direction = torch.Tensor([targets[j][1] - point[1], targets[j][0] - point[0]])
                 distancia_atual = torch.linalg.norm(direction)
+                
+                if self.dist_ini_pi_ti[j] == 0:
+                    self.dist_ini_pi_ti[j] = distancia_atual
 
                 if torch.round(distancia_atual.double() * 1000) > torch.round(self.distancias_anteriores[j].double() * 1000):
-                    print(80 * "=" + "DISTÂNCIA ENTRE P E T AUMENTOU!")
+                    #print(80 * "=" + "DISTÂNCIA ENTRE P E T AUMENTOU!")
                     self.distancia_invalida = True
                     self.w_inicial = self.w.detach().clone()
                     self.num_iteracoes = 0
@@ -613,24 +623,26 @@ class Renderer:
             if not res.stop:
 
                 if self.num_iteracoes == self.ITERACAO_MAX:
-                    print("caí na inicialização 1 do self.w_dif_inicial ") 
+                    #print("caí na inicialização 1 do self.w_dif_inicial ") 
                     self.w_dif_inicial = self.w.detach() - self.w_inicial.detach()
-                    print(self.w_dif_inicial)
+                    #print(self.w_dif_inicial)
                
                 # Otimização rápida de w
                     # Realizada somente após as primeiras x iterações e apenas para 1 ponto de manipulação.
                 if self.num_iteracoes >= self.ITERACAO_MAX and not self.distancia_invalida:
                     with torch.no_grad():
-                        print(80 * "=" + "caí na otimização RÁPIDA ") 
+                        #print(80 * "=" + "caí na otimização RÁPIDA ") 
+                        self.num_tot_iteracoes_prop += 1
                         self.w = self.w.detach() + self.w_dif_inicial.detach()
 
                 # Otimização original de w 
                 else:
-                    print(80 * "=" + "caí na otimização NORMAL ") 
-                    print(f"PERDA: {loss}") 
+                    # print(80 * "=" + "caí na otimização NORMAL ") 
+                    # print(f"PERDA: {loss}") 
+                    self.num_tot_iteracoes_trad += 1
 
                     if self.num_iteracoes == 0:
-                        print(80 * "=" + "caí na reinicialização do otimizador Adam  ") 
+                        #print(80 * "=" + "caí na reinicialização do otimizador Adam  ") 
                         self.w.requires_grad = True
                         self.w_optim = torch.optim.Adam([self.w], lr=0.001)
                         self.feat_refs = None  # referências de características
@@ -691,15 +703,21 @@ class Renderer:
                     # Imprimindo informações
 
                     print(50 * "*")
-                    print(f"Total de Iterações utilizadas: {self.num_iteracoes_tot}")  
-                    print(f"Tempo decorrido: {elapsed_time} segundos")  # Exibe o tempo decorrido
-                    print(f"Memória da GPU alocada usada: {gpu_memory_allocated_used / 1024**2} MB")
-                    print(f"Memória da GPU reservada usada: {gpu_memory_reserved_used / 1024**2} MB")            
+                    
+                    dist = ""                    
+                    for d in self.dist_ini_pi_ti:
+                        dist += str(d) + " "
+                    print(f"Distância inicial entre pi e ti: {dist}") 
 
+                    print(f"Total de Iterações Tradicionais utilizadas: {self.num_tot_iteracoes_trad}") 
+                    print(f"Total de Iterações Propostas utilizadas: {self.num_tot_iteracoes_prop }") 
+                    print(f"Tempo decorrido: {elapsed_time} segundos")  # Exibe o tempo decorrido
+                    
+                    print(f"\nMemória da GPU alocada usada: {gpu_memory_allocated_used / 1024**2} MB")
+                    print(f"Memória da GPU reservada usada: {gpu_memory_reserved_used / 1024**2} MB")
                     print(f"Memória total da GPU: {total_gpu_memory_mb:.2f} MB")
                     print(f"Memória da GPU atualmente alocada: {current_memory_allocated_mb:.2f} MB")
-                    print(f"Memória da GPU atualmente reservada: {current_memory_reserved_mb:.2f} MB")                
-
+                    print(f"Memória da GPU atualmente reservada: {current_memory_reserved_mb:.2f} MB")
                     print(f"Memória RAM Total: {total_ram_memory:.2f} MB")
                     print(f"Memória RAM Usada: {used_ram_memory:.2f} MB")
                     print(f"Memória RAM Disponível: {available_ram_memory:.2f} MB")
@@ -707,10 +725,9 @@ class Renderer:
 
                     print(50 * "*")
 
-        print(f"\nself.num_iteracoes: {self.num_iteracoes}") 
+        #print(f"\nself.num_iteracoes: {self.num_iteracoes}") 
         
         self.num_iteracoes += 1
-        self.num_iteracoes_tot += 1
 
         #----------------------------------------------------------------------------
         # Dimensione e converta para uint8 (Seleção e Normalização da Imagem)
